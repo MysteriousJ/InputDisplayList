@@ -4,7 +4,7 @@ true (Transparent background? true or false. Supported by Windows Vista and late
 48 (Width of images in pixels)
 48 (Height of images in pixels)
 100 (Maximum number of inputs to display at once)
-b 0 img/lp.png (A button input. The number is the button index, followed by the image to display for it.)
+b 0 img/lp.png (A button input. The number is the button index, followed by the image to display for it. Image file paths cannot have spaces)
 b 1 img/mp.png
 b 2 img/hp.png
 b 3 img/lk.png
