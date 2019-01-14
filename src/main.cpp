@@ -1,6 +1,10 @@
-#include <windows.h>
+#ifdef WIN32
+	// Use Win32 window backend instead of SDL (allows transparent background)
+	#define WINDOW_WIN32
+	#include <windows.h>
+	#include <dwmapi.h>
+#endif
 #include <gl/GL.h>
-#include <dwmapi.h>
 #include "SDL/SDL.h"
 #include "SDL/SDL_video.h"
 #include "SDL/SDL_syswm.h"
@@ -11,11 +15,6 @@
 #include <sstream>
 #include <string>
 #include <vector>
-#undef main
-
-// Select window backend. WIN32 supports more features on windows.
-#define WINDOW_WIN32
-//#define WINDOW_SDL
 
 #define forloop(i,end) for(unsigned int i=0; i<(end); i++)
 typedef unsigned int uint;
@@ -72,6 +71,7 @@ struct Config
 	bool transparentBackground;
 	uint imageWidth;
 	uint imageHeight;
+	uint maxDisplayedInputs;
 	std::vector<InputMapping> inputMaps;
 };
 
@@ -342,6 +342,7 @@ void parseConfigFile(Config* out, const char* filePath)
 	parseColor(inputFile, &out->backgroundColor);
 	parseUInt(inputFile, &out->imageWidth);
 	parseUInt(inputFile, &out->imageHeight);
+	parseUInt(inputFile, &out->maxDisplayedInputs);
 	InputMapping mapping={0};
 	while (parseInputMapping(inputFile, &mapping))
 	{
@@ -433,42 +434,18 @@ void addInputToList(InputDisplayList* mod, Texture inputImage, uint frameNumber,
 #ifdef WINDOW_WIN32
 LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-	static bool windowPositionSet = false;
-	static int windowX = -1;
-	static int windowY = -1;
-
 	if (msg == WM_DESTROY) {
 		PostQuitMessage(0);
 		return 0;
 	}
-	if (msg == WM_KILLFOCUS) {
-		if (windowPositionSet) {
-			
-		}
-		return 0;
-	}
-	if (msg == WM_ACTIVATE && windowPositionSet) {
+	if (msg == WM_ACTIVATE) {
 		// Remove the border when the window loses focus, and add it back when it is refocused.
-		// Have to resize and reposition the window so the client area stays the same whether or not the window has a border.
-		RECT windowClientRect;
-		GetClientRect(hwnd, &windowClientRect);
 		if (LOWORD(wParam) == WA_INACTIVE) {
-			RECT windowRect = windowClientRect;
-			AdjustWindowRectEx(&windowRect, WS_VISIBLE | WS_OVERLAPPEDWINDOW, FALSE, GetWindowLong(hwnd, GWL_EXSTYLE));
-			//MoveWindow(hwnd, windowX-windowRect.left, windowY-windowRect.top, windowClientRect.right, windowClientRect.bottom, TRUE);
 			SetWindowLong(hwnd, GWL_STYLE, WS_VISIBLE | WS_POPUP | WS_OVERLAPPED);
 		}
 		else {
-			AdjustWindowRectEx(&windowClientRect, WS_VISIBLE | WS_OVERLAPPEDWINDOW, FALSE, GetWindowLong(hwnd, GWL_EXSTYLE));
-			//MoveWindow(hwnd, windowX+windowClientRect.left, windowY+windowClientRect.top, windowClientRect.right-windowClientRect.left, windowClientRect.bottom-windowClientRect.top, TRUE);
 			SetWindowLong(hwnd, GWL_STYLE, WS_VISIBLE | WS_OVERLAPPEDWINDOW);
 		}
-		return 0;
-	}
-	if (msg == WM_MOVE) {
-		windowX = (int)(short)LOWORD(lParam);
-		windowY = (int)(short)HIWORD(lParam);
-		windowPositionSet = true;
 		return 0;
 	}
 	return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -529,22 +506,24 @@ void setWindowStyle(Window* mod, bool alwaysOnTop, bool transparentBackground)
 	}
 
 	if (transparentBackground) {
-		DWM_BLURBEHIND blurInfo ={0};
-		blurInfo.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
-		blurInfo.fEnable = TRUE;
-		//blurInfo.fTransitionOnMaximized = TRUE;
-		blurInfo.hRgnBlur = CreateRectRgn(0, 0, -1, -1);
-		DwmEnableBlurBehindWindow(mod->hwnd, &blurInfo);
-		DWM_PRESENT_PARAMETERS presentParams ={0};
-		presentParams.cbSize = sizeof(DWM_PRESENT_PARAMETERS);
-		presentParams.fUseSourceRate = TRUE;
-		UNSIGNED_RATIO rate;
-		rate.uiNumerator = 60000;
-		rate.uiDenominator = 1001;
-		presentParams.rateSource = rate;
-		presentParams.cRefreshesPerFrame = 1;
-		presentParams.eSampling = DWM_SOURCE_FRAME_SAMPLING_COVERAGE;
-		DwmSetPresentParameters(mod->hwnd, &presentParams);
+		#ifdef ENABLE_TRANSPARENCY
+			DWM_BLURBEHIND blurInfo ={0};
+			blurInfo.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
+			blurInfo.fEnable = TRUE;
+			//blurInfo.fTransitionOnMaximized = TRUE;
+			blurInfo.hRgnBlur = CreateRectRgn(0, 0, -1, -1);
+			DwmEnableBlurBehindWindow(mod->hwnd, &blurInfo);
+			DWM_PRESENT_PARAMETERS presentParams ={0};
+			presentParams.cbSize = sizeof(DWM_PRESENT_PARAMETERS);
+			presentParams.fUseSourceRate = TRUE;
+			UNSIGNED_RATIO rate;
+			rate.uiNumerator = 60000;
+			rate.uiDenominator = 1001;
+			presentParams.rateSource = rate;
+			presentParams.cRefreshesPerFrame = 1;
+			presentParams.eSampling = DWM_SOURCE_FRAME_SAMPLING_COVERAGE;
+			DwmSetPresentParameters(mod->hwnd, &presentParams);
+		#endif // ENABLE_TRANSPARENCY
 	}
 #endif
 }
@@ -599,7 +578,7 @@ void swapBuffers(Window* window)
 #endif
 }
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine, int iCmdShow)
+int main(int argc, char** argv)
 {
 	SDL_Init(SDL_INIT_VIDEO);
 	SDL_InitSubSystem(SDL_INIT_JOYSTICK);
@@ -607,10 +586,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine,
 
 	Window window ={0};
 	createWindow(&window);
-
-	// Parse config file
+	
 	Config config ={0};
-	parseConfigFile(&config, "config.txt");
+	if (argc > 1) parseConfigFile(&config, argv[1]);
+	else parseConfigFile(&config, "config.txt");
 
 	setWindowStyle(&window, config.alwaysOnTop, config.transparentBackground);
 
@@ -627,6 +606,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine,
 		processWindowMessages(&window, &quit);
 		if (quit) run = false;
 
+		// Resize viewport if window size changed
 		int windowWidth, windowHeight;
 		getWindowSize(window, &windowWidth, &windowHeight);
 		if (previousWindowWidth != windowWidth|| previousWindowHeight != windowHeight) {
@@ -635,8 +615,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine,
 			previousWindowHeight = windowHeight;
 		}
 
+		// Record inputs
 		updateInput(&input);
-
 		std::vector<InputAction> activeInputs = getActiveInputsList(input);
 		forloop(activeIndex, activeInputs.size())
 		{
@@ -644,14 +624,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine,
 			{
 				if (compareInputActions(activeInputs[activeIndex], config.inputMaps[mapIndex].input))
 				{
-					addInputToList(&inputList, config.inputMaps[mapIndex].image, frameCount, 100);
+					addInputToList(&inputList, config.inputMaps[mapIndex].image, frameCount, config.maxDisplayedInputs);
 				}
 			}
 		}
 
+		// Render
 		glClearColor(config.backgroundColor.r, config.backgroundColor.g, config.backgroundColor.b, 0);
 		glClear(GL_COLOR_BUFFER_BIT);
-
 		renderInputList(inputList, config.imageWidth, config.imageHeight, windowWidth, windowHeight);
 		
 		swapBuffers(&window);
