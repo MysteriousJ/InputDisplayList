@@ -506,24 +506,22 @@ void setWindowStyle(Window* mod, bool alwaysOnTop, bool transparentBackground)
 	}
 
 	if (transparentBackground) {
-		#ifdef ENABLE_TRANSPARENCY
-			DWM_BLURBEHIND blurInfo ={0};
-			blurInfo.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
-			blurInfo.fEnable = TRUE;
-			//blurInfo.fTransitionOnMaximized = TRUE;
-			blurInfo.hRgnBlur = CreateRectRgn(0, 0, -1, -1);
-			DwmEnableBlurBehindWindow(mod->hwnd, &blurInfo);
-			DWM_PRESENT_PARAMETERS presentParams ={0};
-			presentParams.cbSize = sizeof(DWM_PRESENT_PARAMETERS);
-			presentParams.fUseSourceRate = TRUE;
-			UNSIGNED_RATIO rate;
-			rate.uiNumerator = 60000;
-			rate.uiDenominator = 1001;
-			presentParams.rateSource = rate;
-			presentParams.cRefreshesPerFrame = 1;
-			presentParams.eSampling = DWM_SOURCE_FRAME_SAMPLING_COVERAGE;
-			DwmSetPresentParameters(mod->hwnd, &presentParams);
-		#endif // ENABLE_TRANSPARENCY
+		DWM_BLURBEHIND blurInfo ={0};
+		blurInfo.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
+		blurInfo.fEnable = TRUE;
+		//blurInfo.fTransitionOnMaximized = TRUE;
+		blurInfo.hRgnBlur = CreateRectRgn(0, 0, -1, -1);
+		DwmEnableBlurBehindWindow(mod->hwnd, &blurInfo);
+		DWM_PRESENT_PARAMETERS presentParams ={0};
+		presentParams.cbSize = sizeof(DWM_PRESENT_PARAMETERS);
+		presentParams.fUseSourceRate = TRUE;
+		UNSIGNED_RATIO rate;
+		rate.uiNumerator = 60000;
+		rate.uiDenominator = 1001;
+		presentParams.rateSource = rate;
+		presentParams.cRefreshesPerFrame = 1;
+		presentParams.eSampling = DWM_SOURCE_FRAME_SAMPLING_COVERAGE;
+		DwmSetPresentParameters(mod->hwnd, &presentParams);
 	}
 #endif
 }
