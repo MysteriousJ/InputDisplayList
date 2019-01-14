@@ -70,13 +70,19 @@ struct Config
 	Color backgroundColor;
 	bool alwaysOnTop;
 	bool transparentBackground;
+	uint imageWidth;
+	uint imageHeight;
 	std::vector<InputMapping> inputMaps;
 };
 
-struct InputList
+struct InputDisplay
 {
-	std::vector<Texture> textures;
-	uint inputCount;
+	Texture image;
+	uint frameNumber;
+};
+struct InputDisplayList
+{
+	std::vector<InputDisplay> inputs;
 };
 
 struct Input
@@ -272,6 +278,14 @@ void parseBool(std::istream& input, bool* out)
 	}
 }
 
+void parseUInt(std::istream& input, uint* out)
+{
+	std::string lineBuffer;
+	std::getline(input, lineBuffer);
+	std::stringstream line(lineBuffer);
+	line >> *out;
+}
+
 void parseColor(std::istream& input, Color* out)
 {
 	std::string lineBuffer;
@@ -303,21 +317,15 @@ bool parseInputMapping(std::istream& input, InputMapping* out)
 		out->input.type = InputAction::Type_hat;
 		std::string direction;
 		line >> direction;
-		if (direction == "left") {
-			out->input.hat.pov = SDL_HAT_LEFT;
-		}
-		else if (direction == "right") {
-			out->input.hat.pov = SDL_HAT_RIGHT;
-		}
-		else if (direction == "up") {
-			out->input.hat.pov = SDL_HAT_UP;
-		}
-		else if (direction == "down") {
-			out->input.hat.pov = SDL_HAT_DOWN;
-		}
-		else {
-			return false;
-		}
+		if (direction == "left") out->input.hat.pov = SDL_HAT_LEFT;
+		else if (direction == "right") out->input.hat.pov = SDL_HAT_RIGHT;
+		else if (direction == "up") out->input.hat.pov = SDL_HAT_UP;
+		else if (direction == "down") out->input.hat.pov = SDL_HAT_DOWN;
+		else if (direction == "upleft") out->input.hat.pov = SDL_HAT_LEFTUP;
+		else if (direction == "downleft") out->input.hat.pov = SDL_HAT_LEFTDOWN;
+		else if (direction == "upright") out->input.hat.pov = SDL_HAT_RIGHTUP;
+		else if (direction == "downright") out->input.hat.pov = SDL_HAT_RIGHTDOWN;
+		else return false;
 		std::string file;
 		line >> file;
 		createTextureFromImage(&out->image, file.c_str());
@@ -332,6 +340,8 @@ void parseConfigFile(Config* out, const char* filePath)
 	parseBool(inputFile, &out->alwaysOnTop);
 	parseBool(inputFile, &out->transparentBackground);
 	parseColor(inputFile, &out->backgroundColor);
+	parseUInt(inputFile, &out->imageWidth);
+	parseUInt(inputFile, &out->imageHeight);
 	InputMapping mapping={0};
 	while (parseInputMapping(inputFile, &mapping))
 	{
@@ -359,65 +369,106 @@ void renderImage(Texture texture, float x, float y, float width, float height)
 	glEnd();
 }
 
-void renderInputList(InputList list, int windowWidth, int windowHeight)
+void renderInputList(InputDisplayList list, uint imageWidth, uint imageHeight, int windowWidth, int windowHeight)
 {
-	forloop(i, list.inputCount)
-	{
-		float imageHeight = 2;
-		float imageWidth = 2 * float(windowHeight) / float(windowWidth);
-		float x = i*imageWidth;
+	float renderHeight = 2*float(imageHeight)/float(windowHeight);
+	float renderWidth = 2*float(imageWidth)/float(windowWidth);
+	if (windowWidth > windowHeight) {
+		// Render horizontally
+		float x = 2-renderWidth;
 		float y = 0;
-		renderImage(list.textures[i], x, y, imageWidth, imageHeight);
+		forloop(i, list.inputs.size())
+		{
+			renderImage(list.inputs[i].image, x, y, renderWidth, renderHeight);
+			// Overlap inputs that happened on the same frame
+			if (i<list.inputs.size()-1 && list.inputs[i].frameNumber == list.inputs[i+1].frameNumber) {
+				y += renderHeight*0.6f;
+			}
+			else {
+				x -= renderWidth;
+				y = 0;
+			}
+		}
+	}
+	else {
+		// Render vertically
+		float x = 0;
+		float y = 2 - renderHeight;
+		forloop(i, list.inputs.size())
+		{
+			renderImage(list.inputs[i].image, x, y, renderWidth, renderHeight);
+			// Overlap inputs that happened on the same frame
+			if (i<list.inputs.size()-1 && list.inputs[i].frameNumber == list.inputs[i+1].frameNumber) {
+				x += renderWidth*0.6f;
+			}
+			else {
+				y -= renderHeight;
+				x = 0;
+			}
+		}
 	}
 }
 
-void addInputToList(InputList* mod, Texture inputImage)
+void addInputToList(InputDisplayList* mod, Texture inputImage, uint frameNumber, uint maxInputCount)
 {
+	InputDisplay display ={0};
+	display.image = inputImage;
+	display.frameNumber = frameNumber;
+
+	if (mod->inputs.size() < maxInputCount) {
+		mod->inputs.resize(mod->inputs.size()+1);
+	}
+
 	// Shift all inputs in list back
-	uint i = mod->textures.size()-1;
+	uint i = mod->inputs.size()-1;
 	while (i>0) {
-		mod->textures[i] = mod->textures[i-1];
+		mod->inputs[i] = mod->inputs[i-1];
 		--i;
 	}
 
 	// Add input at front of list
-	mod->textures[0] = inputImage;
-
-	if (mod->inputCount < mod->textures.size()) {
-		mod->inputCount += 1;
-	}
+	mod->inputs[0] = display;
 }
 
 #ifdef WINDOW_WIN32
 LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-	static int windowX = 20;
-	static int windowY = 20;
+	static bool windowPositionSet = false;
+	static int windowX = -1;
+	static int windowY = -1;
 
 	if (msg == WM_DESTROY) {
 		PostQuitMessage(0);
 		return 0;
 	}
 	if (msg == WM_KILLFOCUS) {
-		RECT windowClientRect;
-		GetClientRect(hwnd, &windowClientRect);
-		RECT windowRect = windowClientRect;
-		AdjustWindowRectEx(&windowRect, WS_VISIBLE | WS_OVERLAPPEDWINDOW, FALSE, GetWindowLong(hwnd, GWL_EXSTYLE));
-		SetWindowLong(hwnd, GWL_STYLE, WS_VISIBLE | WS_POPUP | WS_OVERLAPPED);
-		MoveWindow(hwnd, windowX-windowRect.left, windowY-windowRect.top, windowClientRect.right, windowClientRect.bottom, TRUE);
+		if (windowPositionSet) {
+			
+		}
 		return 0;
 	}
-	if (msg == WM_ACTIVATE) {
+	if (msg == WM_ACTIVATE && windowPositionSet) {
+		// Remove the border when the window loses focus, and add it back when it is refocused.
+		// Have to resize and reposition the window so the client area stays the same whether or not the window has a border.
 		RECT windowClientRect;
 		GetClientRect(hwnd, &windowClientRect);
-		AdjustWindowRectEx(&windowClientRect, WS_VISIBLE | WS_OVERLAPPEDWINDOW, FALSE, GetWindowLong(hwnd,GWL_EXSTYLE));
-		SetWindowLong(hwnd, GWL_STYLE, WS_VISIBLE | WS_OVERLAPPEDWINDOW);
-		MoveWindow(hwnd, windowX+windowClientRect.left, windowY+windowClientRect.top, windowClientRect.right-windowClientRect.left, windowClientRect.bottom-windowClientRect.top, TRUE);
+		if (LOWORD(wParam) == WA_INACTIVE) {
+			RECT windowRect = windowClientRect;
+			AdjustWindowRectEx(&windowRect, WS_VISIBLE | WS_OVERLAPPEDWINDOW, FALSE, GetWindowLong(hwnd, GWL_EXSTYLE));
+			//MoveWindow(hwnd, windowX-windowRect.left, windowY-windowRect.top, windowClientRect.right, windowClientRect.bottom, TRUE);
+			SetWindowLong(hwnd, GWL_STYLE, WS_VISIBLE | WS_POPUP | WS_OVERLAPPED);
+		}
+		else {
+			AdjustWindowRectEx(&windowClientRect, WS_VISIBLE | WS_OVERLAPPEDWINDOW, FALSE, GetWindowLong(hwnd, GWL_EXSTYLE));
+			//MoveWindow(hwnd, windowX+windowClientRect.left, windowY+windowClientRect.top, windowClientRect.right-windowClientRect.left, windowClientRect.bottom-windowClientRect.top, TRUE);
+			SetWindowLong(hwnd, GWL_STYLE, WS_VISIBLE | WS_OVERLAPPEDWINDOW);
+		}
 		return 0;
 	}
 	if (msg == WM_MOVE) {
 		windowX = (int)(short)LOWORD(lParam);
 		windowY = (int)(short)HIWORD(lParam);
+		windowPositionSet = true;
 		return 0;
 	}
 	return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -426,17 +477,18 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 
 void createWindow(Window* out)
 {
-	int width = 400;
+	int width = 600;
 	int height = 100;
+
 #ifdef WINDOW_WIN32
 	// Create window
 	WNDCLASS wnd ={0};
 	wnd.hInstance = GetModuleHandle(0);
 	wnd.lpfnWndProc = WindowProcedure;
-	wnd.lpszClassName = "OpenGL Immediate Example Class";
+	wnd.lpszClassName = "Input Display Class";
 	wnd.hCursor = LoadCursor(0, IDC_ARROW);
 	RegisterClass(&wnd);
-	out->hwnd = CreateWindowEx(0, wnd.lpszClassName, "OpenGL Immediate Example", WS_OVERLAPPEDWINDOW|WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, width, height, 0, 0, GetModuleHandle(0), 0);
+	out->hwnd = CreateWindowEx(0, wnd.lpszClassName, "Input Display", WS_OVERLAPPEDWINDOW|WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, width, height, 0, 0, GetModuleHandle(0), 0);
 
 	// Create OpenGL context
 	PIXELFORMATDESCRIPTOR requestedFormat ={0};
@@ -462,6 +514,11 @@ void createWindow(Window* out)
 	out->win = SDL_CreateWindow(0, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
 	out->context = SDL_GL_CreateContext(out->win);
 #endif
+
+	// Setup OpenGL
+	glEnable(GL_TEXTURE_2D);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 }
 
 void setWindowStyle(Window* mod, bool alwaysOnTop, bool transparentBackground)
@@ -553,21 +610,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine,
 
 	// Parse config file
 	Config config ={0};
-	parseConfigFile(&config, "config");
+	parseConfigFile(&config, "config.txt");
 
 	setWindowStyle(&window, config.alwaysOnTop, config.transparentBackground);
 
-	// Setup OpenGL
-	glEnable(GL_TEXTURE_2D);
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
 	Input input ={0};
 	updateInput(&input);
-	InputList inputList;
-	inputList.textures.resize(100);
-	inputList.inputCount = 0;
+	InputDisplayList inputList;
 
+	uint frameCount = 0;
 	int previousWindowWidth = 0;
 	int previousWindowHeight = 0;
 	bool run = true;
@@ -593,7 +644,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine,
 			{
 				if (compareInputActions(activeInputs[activeIndex], config.inputMaps[mapIndex].input))
 				{
-					addInputToList(&inputList, config.inputMaps[mapIndex].image);
+					addInputToList(&inputList, config.inputMaps[mapIndex].image, frameCount, 100);
 				}
 			}
 		}
@@ -601,10 +652,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR szCmdLine,
 		glClearColor(config.backgroundColor.r, config.backgroundColor.g, config.backgroundColor.b, 0);
 		glClear(GL_COLOR_BUFFER_BIT);
 
-		renderInputList(inputList, windowWidth, windowHeight);
+		renderInputList(inputList, config.imageWidth, config.imageHeight, windowWidth, windowHeight);
 		
-		// Swap back and front buffers to display image
 		swapBuffers(&window);
+		++frameCount;
 	}
 
 	return 0;

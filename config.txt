@@ -1,6 +1,8 @@
 true (Always on top? true or false.)
 true (Transparent background? true or false. Supported by Windows Vista and later.)
 0 0 0 (Background color. Range for values is [0,1])
+48 (Width of images in pixels)
+48 (Height of images in pixels)
 b 0 img/lp.png (A button input. The number is the button index, followed by the image to display for it.)
 b 1 img/mp.png
 b 2 img/hp.png
@@ -11,3 +13,7 @@ h left img/left.png (A HAT input, which is the d-pad on many controllers)
 h right img/right.png
 h up img/up.png
 h down img/down.png
+h upleft img/upleft.png
+h upright img/upright.png
+h downleft img/downleft.png
+h downright img/downright.png
