@@ -1,3 +1,5 @@
+![Screen shot](screenshot.png)
+
 This program displays your inputs as you enter them in a list format. The list can be vertical or horizontal by making the window tall or wide. The background can be transparent or a solid color, and the window border will disappear when it is not focused. A pre-built exe is included in the repo.
 
 # Platforms
@@ -10,3 +12,8 @@ You may want to have more than one config file for different games and joysticks
 
 # Building
 Open build.bat in a text editor and set the paths for SDL include and lib directories (The code expects the include path to have the headers in an "SDL" folder). Run build.bat from a Visual Studio command line (search "dev" on the start menu).
+
+# Dependencies
+[SDL2](https://www.libsdl.org/) for joystick support (and possibly future Linux support). A DLL is included in the repo.
+
+[stb_image](https://github.com/nothings/stb) for loading images. This is a single-header library that's included in src.

@@ -4,7 +4,7 @@ true (Transparent background? true or false. Supported by Windows Vista and late
 48 (Width of images in pixels)
 48 (Height of images in pixels)
 100 (Maximum number of inputs to display at once)
-d left img/left.png (A mapping from a direction to the image to display for it.)
+d left img/left.png (A mapping from a direction to the image to display for it. Image file paths cannot have spaces))
 d right img/right.png
 d up img/up.png
 d down img/down.png
