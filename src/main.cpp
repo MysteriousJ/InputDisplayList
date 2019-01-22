@@ -40,6 +40,13 @@ struct HatInputAction
 	uint pov;
 };
 
+struct AxisInputAction
+{
+	uint axisIndex;
+	float restPosition;
+	float triggerPosition;
+};
+
 struct KeyboardInputAction
 {
 	uint keyIndex;
@@ -47,20 +54,37 @@ struct KeyboardInputAction
 
 struct InputAction
 {
-	enum Type { Type_button, Type_hat, Type_keyboard };
+	enum Type { Type_button, Type_hat, Type_axis, Type_keyboard };
 
 	union {
 		ButtonInputAction button;
 		HatInputAction hat;
+		AxisInputAction axis;
 		KeyboardInputAction key;
 	};
 
 	Type type;
 };
 
+struct InputResult
+{
+	enum Type { Type_direction, Type_image };
+	union {
+		Texture image;
+		uint direction;
+	};
+	Type type;
+};
+
 struct InputMapping
 {
+	InputResult result;
 	InputAction input;
+};
+
+struct DirectionMapping
+{
+	uint direction;
 	Texture image;
 };
 
@@ -73,6 +97,7 @@ struct Config
 	uint imageHeight;
 	uint maxDisplayedInputs;
 	std::vector<InputMapping> inputMaps;
+	std::vector<DirectionMapping> directionMaps;
 };
 
 struct InputDisplay
@@ -94,6 +119,8 @@ struct Input
 	struct Joystick {
 		uint buttonCount;
 		Button *buttons;
+		uint axisCount;
+		float* axes;
 		int hat;
 		int previousHat;
 		SDL_Joystick* sdlJoy;
@@ -137,6 +164,7 @@ void updateInput(Input* input)
 		forloop(i, input->joystickCount)
 		{
 			delete[] input->joysticks[i].buttons;
+			delete[] input->joysticks[i].axes;
 			SDL_JoystickClose(input->joysticks[i].sdlJoy);
 		}
 		delete[] input->joysticks;
@@ -150,6 +178,8 @@ void updateInput(Input* input)
 			{
 				input->joysticks[i].buttonCount = SDL_JoystickNumButtons(input->joysticks[i].sdlJoy);
 				input->joysticks[i].buttons = new Input::Button[input->joysticks[i].buttonCount];
+				input->joysticks[i].axisCount = SDL_JoystickNumAxes(input->joysticks[i].sdlJoy);
+				input->joysticks[i].axes = new float[input->joysticks[i].axisCount];
 			}
 		}
 	}
@@ -167,6 +197,11 @@ void updateInput(Input* input)
 		// Hat
 		joystick->previousHat = joystick->hat;
 		joystick->hat = SDL_JoystickGetHat(joystick->sdlJoy, 0);
+		// Axis
+		forloop(axisIndex, joystick->axisCount)
+		{
+			joystick->axes[axisIndex] = SDL_JoystickGetAxis(joystick->sdlJoy, axisIndex) / 32767.f;
+		}
 	}
 
 	// Update keyboard
@@ -183,66 +218,44 @@ void updateInput(Input* input)
 	}
 }
 
-// Checks if two inputs are equal
-bool compareInputActions(InputAction a, InputAction b)
+// Check if an input is currently active
+bool checkInputAction(Input input, InputAction action)
 {
-	if (a.type != b.type) return false;
-	switch (a.type)
-	{
-	case InputAction::Type_button:
-		return a.button.buttonIndex == b.button.buttonIndex;
-	case InputAction::Type_hat:
-		return a.hat.pov == b.hat.pov;
-	case InputAction::Type_keyboard:
-		return a.key.keyIndex == b.key.keyIndex;
-	default:
-		SDL_assert(!"Unimplemented input action type");
-		return false;
-	}
-}
-
-// Make a list of all inputs that changed this frame
-std::vector<InputAction> getActiveInputsList(Input input)
-{
-	std::vector<InputAction> list;
-
 	forloop(joystickIndex, input.joystickCount)
 	{
-		forloop(buttonIndex, input.joysticks[joystickIndex].buttonCount)
+		Input::Joystick& joystick = input.joysticks[joystickIndex];
+
+		if (action.type == InputAction::Type_button
+			&& action.button.buttonIndex < joystick.buttonCount
+			&& joystick.buttons[action.button.buttonIndex].pressed)
 		{
-			if (input.joysticks[joystickIndex].buttons[buttonIndex].pressed)
-			{
-				InputAction action;
-				action.type = InputAction::Type_button;
-				action.button.buttonIndex = buttonIndex;
-				list.push_back(action);
-			}
+			return true;
 		}
 
-		if (input.joysticks[joystickIndex].hat != input.joysticks[joystickIndex].previousHat)
+		if (action.type == InputAction::Type_hat
+			&& joystick.hat & action.hat.pov)
 		{
-			InputAction action;
-			action.type = InputAction::Type_hat;
-			action.hat.pov = input.joysticks[joystickIndex].hat;
-			list.push_back(action);
+			return true;
+		}
+
+		if (action.type == InputAction::Type_axis
+			&& action.axis.axisIndex < joystick.axisCount)
+		{
+			float axisValue = joystick.axes[action.axis.axisIndex];
+			if (action.axis.triggerPosition < action.axis.restPosition
+				&& axisValue <= action.axis.triggerPosition)
+			{
+				return true;
+			}
+			if (action.axis.triggerPosition > action.axis.restPosition
+				&& axisValue >= action.axis.triggerPosition)
+			{
+				return true;
+			}
 		}
 	}
 
-	forloop(keyIndex, input.supportedKeyCount)
-	{
-		if (input.keyboard[keyIndex].pressed)
-		{
-			if (keyIndex != SDL_SCANCODE_RETURN && keyIndex != SDL_SCANCODE_BACKSPACE)
-			{
-				InputAction action;
-				action.type = InputAction::Type_keyboard;
-				action.key.keyIndex = keyIndex;
-				list.push_back(action);
-			}
-		}
-	}
-
-	return list;
+	return false;
 }
 
 void createTextureFromImage(Texture* out, const char* filePath)
@@ -263,97 +276,135 @@ void createTextureFromImage(Texture* out, const char* filePath)
 	}
 }
 
-void parseBool(std::istream& input, bool* out)
+bool parseBool(std::istream& input)
 {
 	std::string lineBuffer;
 	std::getline(input, lineBuffer);
 	std::stringstream line(lineBuffer);
 	std::string value;
 	line >> value;
-	if (value == "true") {
-		*out = true;
-	}
+	return (value == "true");
+}
+
+uint parseUInt(std::istream& input)
+{
+	std::string lineBuffer;
+	std::getline(input, lineBuffer);
+	std::stringstream line(lineBuffer);
+	uint result;
+	line >> result;
+	return result;
+}
+
+Color parseColor(std::istream& input)
+{
+	std::string lineBuffer;
+	std::getline(input, lineBuffer);
+	std::stringstream line(lineBuffer);
+	Color result;
+	line >> result.r >> result.g >> result.b;
+	return result;
+}
+
+InputResult parseInputResult(std::istream& line)
+{
+	InputResult result;
+	result.type = InputResult::Type_direction;
+	std::string text;
+	line >> text;
+	if      (text == "left")  result.direction = SDL_HAT_LEFT;
+	else if (text == "right") result.direction = SDL_HAT_RIGHT;
+	else if (text == "up")    result.direction = SDL_HAT_UP;
+	else if (text == "down")  result.direction = SDL_HAT_DOWN;
 	else {
-		*out = false;
+		result.type = InputResult::Type_image;
+		createTextureFromImage(&result.image, text.c_str());
 	}
+	return result;
 }
 
-void parseUInt(std::istream& input, uint* out)
+DirectionMapping parseDirectionMapping(std::istream& line)
 {
-	std::string lineBuffer;
-	std::getline(input, lineBuffer);
-	std::stringstream line(lineBuffer);
-	line >> *out;
+	DirectionMapping result ={0};
+	std::string direction;
+	line >> direction;
+	if (direction == "left")           result.direction = SDL_HAT_LEFT;
+	else if (direction == "right")     result.direction = SDL_HAT_RIGHT;
+	else if (direction == "up")        result.direction = SDL_HAT_UP;
+	else if (direction == "down")      result.direction = SDL_HAT_DOWN;
+	else if (direction == "upleft")    result.direction = SDL_HAT_LEFTUP;
+	else if (direction == "downleft")  result.direction = SDL_HAT_LEFTDOWN;
+	else if (direction == "upright")   result.direction = SDL_HAT_RIGHTUP;
+	else if (direction == "downright") result.direction = SDL_HAT_RIGHTDOWN;
+	std::string file;
+	line >> file;
+	createTextureFromImage(&result.image, file.c_str());
+	return result;
 }
 
-void parseColor(std::istream& input, Color* out)
+InputMapping parseButtonMapping(std::istream& line)
 {
-	std::string lineBuffer;
-	std::getline(input, lineBuffer);
-	std::stringstream line(lineBuffer);
-	line >> out->r >> out->g >> out->b;
+	InputMapping result ={0};
+	result.input.type = InputAction::Type_button;
+	line >> result.input.button.buttonIndex;
+	result.result = parseInputResult(line);
+	return result;
 }
 
-bool parseInputMapping(std::istream& input, InputMapping* out)
+InputMapping parseHatMapping(std::istream& line)
 {
-	std::string lineBuffer;
-	std::getline(input, lineBuffer);
-	if (lineBuffer.empty()) {
-		return false;
-	}
-	std::stringstream line(lineBuffer);
-	char type;
-	line >> type;
-	// Parse button
-	if (type == 'b') {
-		out->input.type = InputAction::Type_button;
-		line >> out->input.button.buttonIndex;
-		std::string file;
-		line >> file;
-		createTextureFromImage(&out->image, file.c_str());
-		return true;
-	}
-	else if (type == 'h') {
-		out->input.type = InputAction::Type_hat;
-		std::string direction;
-		line >> direction;
-		if (direction == "left") out->input.hat.pov = SDL_HAT_LEFT;
-		else if (direction == "right") out->input.hat.pov = SDL_HAT_RIGHT;
-		else if (direction == "up") out->input.hat.pov = SDL_HAT_UP;
-		else if (direction == "down") out->input.hat.pov = SDL_HAT_DOWN;
-		else if (direction == "upleft") out->input.hat.pov = SDL_HAT_LEFTUP;
-		else if (direction == "downleft") out->input.hat.pov = SDL_HAT_LEFTDOWN;
-		else if (direction == "upright") out->input.hat.pov = SDL_HAT_RIGHTUP;
-		else if (direction == "downright") out->input.hat.pov = SDL_HAT_RIGHTDOWN;
-		else return false;
-		std::string file;
-		line >> file;
-		createTextureFromImage(&out->image, file.c_str());
-		return true;
-	}
-	return false;
+	InputMapping result ={0};
+	result.input.type = InputAction::Type_hat;
+	std::string direction;
+	line >> direction;
+	if (direction == "left")       result.input.hat.pov = SDL_HAT_LEFT;
+	else if (direction == "right") result.input.hat.pov = SDL_HAT_RIGHT;
+	else if (direction == "up")    result.input.hat.pov = SDL_HAT_UP;
+	else if (direction == "down")  result.input.hat.pov = SDL_HAT_DOWN;
+	result.result = parseInputResult(line);
+	return result;
+}
+
+InputMapping parseAxisMapping(std::istream& line)
+{
+	InputMapping result ={0};
+	result.input.type = InputAction::Type_axis;
+	line >> result.input.axis.axisIndex;
+	line >> result.input.axis.restPosition;
+	line >> result.input.axis.triggerPosition;
+	result.result = parseInputResult(line);
+	return result;
 }
 
 void parseConfigFile(Config* out, const char* filePath)
 {
 	std::ifstream inputFile(filePath);
-	parseBool(inputFile, &out->alwaysOnTop);
-	parseBool(inputFile, &out->transparentBackground);
-	parseColor(inputFile, &out->backgroundColor);
-	parseUInt(inputFile, &out->imageWidth);
-	parseUInt(inputFile, &out->imageHeight);
-	parseUInt(inputFile, &out->maxDisplayedInputs);
-	InputMapping mapping={0};
-	while (parseInputMapping(inputFile, &mapping))
-	{
-		out->inputMaps.push_back(mapping);
+	// Each of these reads a line and takes the first word as the value
+	out->alwaysOnTop = parseBool(inputFile);
+	out->transparentBackground = parseBool(inputFile);
+	out->backgroundColor = parseColor(inputFile);
+	out->imageWidth = parseUInt(inputFile);
+	out->imageHeight = parseUInt(inputFile);
+	out->maxDisplayedInputs = parseUInt(inputFile);
+
+	// Parse direction and input mappings
+	while (!inputFile.eof()) {
+		std::string lineBuffer;
+		std::getline(inputFile, lineBuffer);
+		std::stringstream line(lineBuffer);
+		std::string inputType;
+		line >> inputType;
+		if (inputType == "d") out->directionMaps.push_back(parseDirectionMapping(line));
+		else if (inputType == "b") out->inputMaps.push_back(parseButtonMapping(line));
+		else if (inputType == "h") out->inputMaps.push_back(parseHatMapping(line));
+		else if (inputType == "a") out->inputMaps.push_back(parseAxisMapping(line));
 	}
 }
 
 void renderImage(Texture texture, float x, float y, float width, float height)
 {
 	glBindTexture(GL_TEXTURE_2D, texture.id);
-	// Draw triangle with immediate mode interface
+	// Draw a quad with two triangles
 	glBegin(GL_TRIANGLE_STRIP);
 	// Bottom left
 	glTexCoord2f(0, 1);
@@ -375,7 +426,7 @@ void renderInputList(InputDisplayList list, uint imageWidth, uint imageHeight, i
 	float renderHeight = 2*float(imageHeight)/float(windowHeight);
 	float renderWidth = 2*float(imageWidth)/float(windowWidth);
 	if (windowWidth > windowHeight) {
-		// Render horizontally
+		// Display list horizontally
 		float x = 2-renderWidth;
 		float y = 0;
 		forloop(i, list.inputs.size())
@@ -392,7 +443,7 @@ void renderInputList(InputDisplayList list, uint imageWidth, uint imageHeight, i
 		}
 	}
 	else {
-		// Render vertically
+		// Display list vertically
 		float x = 0;
 		float y = 2 - renderHeight;
 		forloop(i, list.inputs.size())
@@ -596,6 +647,7 @@ int main(int argc, char** argv)
 	InputDisplayList inputList;
 
 	uint frameCount = 0;
+	uint previousDirectionInput = 0;
 	int previousWindowWidth = 0;
 	int previousWindowHeight = 0;
 	bool run = true;
@@ -614,17 +666,30 @@ int main(int argc, char** argv)
 		}
 
 		// Record inputs
+		// Directions are combined to support combinations like up-left before deciding on which image to display
 		updateInput(&input);
-		std::vector<InputAction> activeInputs = getActiveInputsList(input);
-		forloop(activeIndex, activeInputs.size())
+		uint accumulatedDirection = 0;
+		forloop(mapIndex, config.inputMaps.size())
 		{
-			forloop(mapIndex, config.inputMaps.size())
+			if (checkInputAction(input, config.inputMaps[mapIndex].input))
 			{
-				if (compareInputActions(activeInputs[activeIndex], config.inputMaps[mapIndex].input))
-				{
-					addInputToList(&inputList, config.inputMaps[mapIndex].image, frameCount, config.maxDisplayedInputs);
+				if (config.inputMaps[mapIndex].result.type == InputResult::Type_direction) {
+					accumulatedDirection |= config.inputMaps[mapIndex].result.direction;
+				}
+				else {
+					addInputToList(&inputList, config.inputMaps[mapIndex].result.image, frameCount, config.maxDisplayedInputs);
 				}
 			}
+		}
+		if (accumulatedDirection != previousDirectionInput)
+		{
+			forloop(i, config.directionMaps.size())
+			{
+				if (config.directionMaps[i].direction == accumulatedDirection) {
+					addInputToList(&inputList, config.directionMaps[i].image, frameCount, config.maxDisplayedInputs);
+				}
+			}
+			previousDirectionInput = accumulatedDirection;
 		}
 
 		// Render

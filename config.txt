@@ -4,17 +4,25 @@ true (Transparent background? true or false. Supported by Windows Vista and late
 48 (Width of images in pixels)
 48 (Height of images in pixels)
 100 (Maximum number of inputs to display at once)
-b 0 img/lp.png (A button input. The number is the button index, followed by the image to display for it.)
-b 1 img/mp.png
-b 2 img/hp.png
-b 3 img/lk.png
+d left img/left.png (A mapping from a direction to the image to display for it.)
+d right img/right.png
+d up img/up.png
+d down img/down.png
+d upleft img/upleft.png
+d upright img/upright.png
+d downleft img/downleft.png
+d downright img/downright.png
+b 0 img/lp.png (A button input. The number is the button index, followed by either a direction or an image file to display for it.)
+b 3 img/mp.png
+b 5 img/hp.png
+b 1 img/lk.png
 b 4 img/mk.png
-b 5 img/hk.png
-h left img/left.png (A HAT input, which is the d-pad on many controllers)
-h right img/right.png
-h up img/up.png
-h down img/down.png
-h upleft img/upleft.png
-h upright img/upright.png
-h downleft img/downleft.png
-h downright img/downright.png
+b 7 img/hk.png
+h left left (A HAT input, which is the d-pad on many controllers. First is the direction on the controller, then the direction or image it maps to.)
+h right right
+h up up
+h down down
+a 0 0 -0.5 left (An axis input. First is the axis index, second the rest postion, third the trigger position, and last is the direction or image it maps to.)
+a 0 0 0.5 right
+a 1 0 0.5 down
+a 1 0 -0.5 up
