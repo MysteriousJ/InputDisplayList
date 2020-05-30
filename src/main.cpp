@@ -1,33 +1,10 @@
-#ifdef WIN32
-	// Use Win32 window backend instead of SDL (allows transparent background)
-	#define WINDOW_WIN32
-	#include <windows.h>
-	#include <dwmapi.h>
-#endif
-#include <gl/GL.h>
-#include "SDL/SDL.h"
-#include "SDL/SDL_video.h"
-#include "SDL/SDL_syswm.h"
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
+#include "platform.h"
+#include "graphics.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
-
-#define forloop(i,end) for(unsigned int i=0; i<(end); i++)
-typedef unsigned int uint;
-
-struct Texture
-{
-	GLuint id;
-};
-
-struct Color
-{
-	float r, g, b;
-};
 
 struct ButtonInputAction
 {
@@ -105,176 +82,11 @@ struct InputDisplay
 	Texture image;
 	uint frameNumber;
 };
+
 struct InputDisplayList
 {
 	std::vector<InputDisplay> inputs;
 };
-
-struct Input
-{
-	struct Button {
-		bool pressed = 0; // True for one update when the button is first pressed.
-		bool down = 0;    // True while the button is held down.
-	};
-	struct Joystick {
-		uint buttonCount;
-		Button *buttons;
-		uint axisCount;
-		float* axes;
-		int hat;
-		int previousHat;
-		SDL_Joystick* sdlJoy;
-	};
-
-	static const uint supportedKeyCount = 0xFF;
-	Button keyboard[supportedKeyCount];
-	uint joystickCount;
-	Joystick* joysticks;
-};
-
-struct Window
-{
-#ifdef WINDOW_WIN32
-	HWND hwnd;
-#else
-	SDL_Window* win;
-	SDL_GLContext context;
-#endif
-};
-
-void updateButton(Input::Button* inout_button, uint isDown)
-{
-	if (isDown) {
-		inout_button->pressed = !inout_button->down;
-		inout_button->down = true;
-	}
-	else {
-		inout_button->pressed = false;
-		inout_button->down = false;
-	}
-}
-
-void updateInput(Input* input)
-{
-	// Handle joysticks beening plugged in or taken out
-	int joystickCount = SDL_NumJoysticks();
-	if (joystickCount != input->joystickCount)
-	{
-		// Free joysticks
-		forloop(i, input->joystickCount)
-		{
-			delete[] input->joysticks[i].buttons;
-			delete[] input->joysticks[i].axes;
-			SDL_JoystickClose(input->joysticks[i].sdlJoy);
-		}
-		delete[] input->joysticks;
-		// Allocate joysticks
-		input->joystickCount = joystickCount;
-		input->joysticks = new Input::Joystick[joystickCount];
-		forloop(i, input->joystickCount)
-		{
-			input->joysticks[i].sdlJoy = SDL_JoystickOpen(i);
-			if (input->joysticks[i].sdlJoy)
-			{
-				input->joysticks[i].buttonCount = SDL_JoystickNumButtons(input->joysticks[i].sdlJoy);
-				input->joysticks[i].buttons = new Input::Button[input->joysticks[i].buttonCount];
-				input->joysticks[i].axisCount = SDL_JoystickNumAxes(input->joysticks[i].sdlJoy);
-				input->joysticks[i].axes = new float[input->joysticks[i].axisCount];
-			}
-		}
-	}
-
-	// Update joystick
-	SDL_JoystickUpdate();
-	forloop(joystickIndex, input->joystickCount)
-	{
-		Input::Joystick* joystick = &input->joysticks[joystickIndex];
-		// Buttons
-		forloop(buttonIndex, joystick->buttonCount)
-		{
-			updateButton(&joystick->buttons[buttonIndex], SDL_JoystickGetButton(joystick->sdlJoy, buttonIndex));
-		}
-		// Hat
-		joystick->previousHat = joystick->hat;
-		joystick->hat = SDL_JoystickGetHat(joystick->sdlJoy, 0);
-		// Axis
-		forloop(axisIndex, joystick->axisCount)
-		{
-			joystick->axes[axisIndex] = SDL_JoystickGetAxis(joystick->sdlJoy, axisIndex) / 32767.f;
-		}
-	}
-
-	// Update keyboard
-	int sdlKeyCount;
-	const Uint8 *keystates = SDL_GetKeyboardState(&sdlKeyCount);
-	forloop(i, Input::supportedKeyCount)
-	{
-		int isKeyDown = 0;
-		// Make sure we don't read past the end of SDL's key array
-		if (i < (uint)sdlKeyCount) {
-			isKeyDown = keystates[i];
-		}
-		updateButton(&input->keyboard[i], isKeyDown);
-	}
-}
-
-// Check if an input is currently active
-bool checkInputAction(Input input, InputAction action)
-{
-	forloop(joystickIndex, input.joystickCount)
-	{
-		Input::Joystick& joystick = input.joysticks[joystickIndex];
-
-		if (action.type == InputAction::Type_button
-			&& action.button.buttonIndex < joystick.buttonCount
-			&& joystick.buttons[action.button.buttonIndex].pressed)
-		{
-			return true;
-		}
-
-		if (action.type == InputAction::Type_hat
-			&& joystick.hat & action.hat.pov)
-		{
-			return true;
-		}
-
-		if (action.type == InputAction::Type_axis
-			&& action.axis.axisIndex < joystick.axisCount)
-		{
-			float axisValue = joystick.axes[action.axis.axisIndex];
-			if (action.axis.triggerPosition < action.axis.restPosition
-				&& axisValue <= action.axis.triggerPosition)
-			{
-				return true;
-			}
-			if (action.axis.triggerPosition > action.axis.restPosition
-				&& axisValue >= action.axis.triggerPosition)
-			{
-				return true;
-			}
-		}
-	}
-
-	return false;
-}
-
-void createTextureFromImage(Texture* out, const char* filePath)
-{
-	int width, height, channels;
-	unsigned char* imageData = stbi_load(filePath, &width, &height, &channels, 0);
-	if (imageData) {
-		GLuint textureID;
-		glGenTextures(1, &textureID);
-		GLenum pixelFormat = (channels == 4)? GL_RGBA : GL_RGBA;
-		glBindTexture(GL_TEXTURE_2D, textureID);
-		glTexImage2D(GL_TEXTURE_2D, 0, pixelFormat, width, height, 0, pixelFormat, GL_UNSIGNED_BYTE, imageData);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		stbi_image_free(imageData);
-
-		out->id = textureID;
-	}
-}
 
 bool parseBool(std::istream& input)
 {
@@ -336,6 +148,7 @@ DirectionMapping parseDirectionMapping(std::istream& line)
 	else if (direction == "downleft")  result.direction = SDL_HAT_LEFTDOWN;
 	else if (direction == "upright")   result.direction = SDL_HAT_RIGHTUP;
 	else if (direction == "downright") result.direction = SDL_HAT_RIGHTDOWN;
+	else if (direction == "center")    result.direction = SDL_HAT_CENTERED;
 	std::string file;
 	line >> file;
 	createTextureFromImage(&result.image, file.c_str());
@@ -401,24 +214,39 @@ void parseConfigFile(Config* out, const char* filePath)
 	}
 }
 
-void renderImage(Texture texture, float x, float y, float width, float height)
+// Check if an input is currently active
+bool checkInputAction(Input::Joystick::State joystick, InputAction action)
 {
-	glBindTexture(GL_TEXTURE_2D, texture.id);
-	// Draw a quad with two triangles
-	glBegin(GL_TRIANGLE_STRIP);
-	// Bottom left
-	glTexCoord2f(0, 1);
-	glVertex3f(-1+x, -1+y, 0);
-	// Bottom right
-	glTexCoord2f(1, 1);
-	glVertex3f(-1+x+width, -1+y, 0);
-	// Top left
-	glTexCoord2f(0, 0);
-	glVertex3f(-1+x, -1+y+height, 0);
-	// Top right
-	glTexCoord2f(1, 0);
-	glVertex3f(-1+x+width, -1+y+height, 0);
-	glEnd();
+	if (action.type == InputAction::Type_button
+		&& action.button.buttonIndex < joystick.buttonCount
+		&& joystick.buttons[action.button.buttonIndex])
+	{
+		return true;
+	}
+
+	if (action.type == InputAction::Type_hat
+		&& joystick.hat & action.hat.pov)
+	{
+		return true;
+	}
+
+	if (action.type == InputAction::Type_axis
+		&& action.axis.axisIndex < joystick.axisCount)
+	{
+		float axisCurrent = joystick.axes[action.axis.axisIndex];
+		if (action.axis.triggerPosition < action.axis.restPosition
+			&& axisCurrent <= action.axis.triggerPosition)
+		{
+			return true;
+		}
+		if (action.axis.triggerPosition > action.axis.restPosition
+			&& axisCurrent >= action.axis.triggerPosition)
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 void renderInputList(InputDisplayList list, uint imageWidth, uint imageHeight, int windowWidth, int windowHeight)
@@ -482,151 +310,6 @@ void addInputToList(InputDisplayList* mod, Texture inputImage, uint frameNumber,
 	mod->inputs[0] = display;
 }
 
-#ifdef WINDOW_WIN32
-LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
-	if (msg == WM_DESTROY) {
-		PostQuitMessage(0);
-		return 0;
-	}
-	if (msg == WM_ACTIVATE) {
-		// Remove the border when the window loses focus, and add it back when it is refocused.
-		if (LOWORD(wParam) == WA_INACTIVE) {
-			SetWindowLong(hwnd, GWL_STYLE, WS_VISIBLE | WS_POPUP | WS_OVERLAPPED);
-		}
-		else {
-			SetWindowLong(hwnd, GWL_STYLE, WS_VISIBLE | WS_OVERLAPPEDWINDOW);
-		}
-		return 0;
-	}
-	return DefWindowProc(hwnd, msg, wParam, lParam);
-}
-#endif
-
-void createWindow(Window* out)
-{
-	int width = 600;
-	int height = 100;
-
-#ifdef WINDOW_WIN32
-	// Create window
-	WNDCLASS wnd ={0};
-	wnd.hInstance = GetModuleHandle(0);
-	wnd.lpfnWndProc = WindowProcedure;
-	wnd.lpszClassName = "Input Display Class";
-	wnd.hCursor = LoadCursor(0, IDC_ARROW);
-	RegisterClass(&wnd);
-	out->hwnd = CreateWindowEx(0, wnd.lpszClassName, "Input Display", WS_OVERLAPPEDWINDOW|WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, width, height, 0, 0, GetModuleHandle(0), 0);
-
-	// Create OpenGL context
-	PIXELFORMATDESCRIPTOR requestedFormat ={0};
-	requestedFormat.nSize = sizeof(PIXELFORMATDESCRIPTOR);
-	requestedFormat.nVersion = 1;
-	requestedFormat.dwFlags = PFD_DRAW_TO_WINDOW|PFD_SUPPORT_OPENGL|PFD_DOUBLEBUFFER|PFD_SUPPORT_COMPOSITION;
-	requestedFormat.iPixelType = PFD_TYPE_RGBA;
-	requestedFormat.cColorBits = 32;
-	requestedFormat.cDepthBits = 24;
-	requestedFormat.cAlphaBits = 8;
-	requestedFormat.cRedBits = 8;
-	requestedFormat.cGreenBits = 8;
-	requestedFormat.cBlueBits = 8;
-	requestedFormat.cStencilBits = 8;
-	requestedFormat.iLayerType = PFD_MAIN_PLANE;
-	HDC deviceContext = GetDC(out->hwnd);
-	int actualFormat = ChoosePixelFormat(deviceContext, &requestedFormat);
-	SetPixelFormat(deviceContext, actualFormat, &requestedFormat);
-	HGLRC renderingContext = wglCreateContext(deviceContext);
-	wglMakeCurrent(deviceContext, renderingContext);
-	ReleaseDC(out->hwnd, deviceContext);
-#else
-	out->win = SDL_CreateWindow(0, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
-	out->context = SDL_GL_CreateContext(out->win);
-#endif
-
-	// Setup OpenGL
-	glEnable(GL_TEXTURE_2D);
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-}
-
-void setWindowStyle(Window* mod, bool alwaysOnTop, bool transparentBackground)
-{
-#ifdef WINDOW_WIN32
-	if (alwaysOnTop) {
-		SetWindowPos(mod->hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
-	}
-
-	if (transparentBackground) {
-		DWM_BLURBEHIND blurInfo ={0};
-		blurInfo.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
-		blurInfo.fEnable = TRUE;
-		//blurInfo.fTransitionOnMaximized = TRUE;
-		blurInfo.hRgnBlur = CreateRectRgn(0, 0, -1, -1);
-		DwmEnableBlurBehindWindow(mod->hwnd, &blurInfo);
-		DWM_PRESENT_PARAMETERS presentParams ={0};
-		presentParams.cbSize = sizeof(DWM_PRESENT_PARAMETERS);
-		presentParams.fUseSourceRate = TRUE;
-		UNSIGNED_RATIO rate;
-		rate.uiNumerator = 60000;
-		rate.uiDenominator = 1001;
-		presentParams.rateSource = rate;
-		presentParams.cRefreshesPerFrame = 1;
-		presentParams.eSampling = DWM_SOURCE_FRAME_SAMPLING_COVERAGE;
-		DwmSetPresentParameters(mod->hwnd, &presentParams);
-	}
-#endif
-}
-
-void processWindowMessages(Window* window, bool* out_quit)
-{
-	*out_quit = false;
-#ifdef WINDOW_WIN32
-	MSG msg;
-	while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
-	{
-		TranslateMessage(&msg);
-		DispatchMessage(&msg);
-		if (msg.message == WM_QUIT) *out_quit = true;
-	}
-#else
-	SDL_Event message;
-	while (SDL_PollEvent(&message)) {
-		if (message.type == SDL_QUIT) {
-			*out_quit = true;
-		}
-		else if (message.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
-			SDL_SetWindowBordered(window->win, SDL_TRUE);
-		}
-		else if (message.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
-			SDL_SetWindowBordered(window->win, SDL_FALSE);
-		}
-	}
-#endif
-}
-
-void getWindowSize(Window window, int* out_width, int* out_height)
-{
-#ifdef WINDOW_WIN32
-	RECT windowClientRect;
-	GetClientRect(window.hwnd, &windowClientRect);
-	*out_width = (int)windowClientRect.right;
-	*out_height = (int)windowClientRect.bottom;
-#else
-	SDL_GetWindowSize(window.win, out_width, out_height);
-#endif
-}
-
-void swapBuffers(Window* window)
-{
-#ifdef WINDOW_WIN32
-	HDC deviceContext = GetDC(window->hwnd);
-	SwapBuffers(deviceContext);
-	ReleaseDC(window->hwnd, deviceContext);
-#else
-	SDL_GL_SwapWindow(window->win);
-#endif
-}
-
 int main(int argc, char** argv)
 {
 	SDL_Init(SDL_INIT_VIDEO);
@@ -635,6 +318,7 @@ int main(int argc, char** argv)
 
 	Window window ={0};
 	createWindow(&window);
+	setupOpenGL();
 	
 	Config config ={0};
 	if (argc > 1) parseConfigFile(&config, argv[1]);
@@ -642,7 +326,7 @@ int main(int argc, char** argv)
 
 	setWindowStyle(&window, config.alwaysOnTop, config.transparentBackground);
 
-	Input input ={0};
+	Input input = {0};
 	updateInput(&input);
 	InputDisplayList inputList;
 
@@ -671,13 +355,19 @@ int main(int argc, char** argv)
 		uint accumulatedDirection = 0;
 		forloop(mapIndex, config.inputMaps.size())
 		{
-			if (checkInputAction(input, config.inputMaps[mapIndex].input))
+			InputMapping map = config.inputMaps[mapIndex];
+			forloop(joystickIndex, input.joystickCount)
 			{
-				if (config.inputMaps[mapIndex].result.type == InputResult::Type_direction) {
-					accumulatedDirection |= config.inputMaps[mapIndex].result.direction;
-				}
-				else {
-					addInputToList(&inputList, config.inputMaps[mapIndex].result.image, frameCount, config.maxDisplayedInputs);
+				Input::Joystick joystick = input.joysticks[joystickIndex];
+				if (checkInputAction(joystick.current, map.input))
+				{
+					if (map.result.type == InputResult::Type_direction) {
+						accumulatedDirection |= map.result.direction;
+					}
+					else if (!checkInputAction(joystick.previous, map.input)) {
+						// Only add if it was not active on the last frame
+						addInputToList(&inputList, map.result.image, frameCount, config.maxDisplayedInputs);
+					}
 				}
 			}
 		}

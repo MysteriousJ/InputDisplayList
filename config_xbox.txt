@@ -13,12 +13,11 @@ d upright img/upright.png
 d downleft img/downleft.png
 d downright img/downright.png
 d center img/center.png
-b 0 img/lp.png (A button input. The number is the button index, followed by either a direction or an image file to display for it.)
+b 2 img/lp.png (A button input. The number is the button index, followed by either a direction or an image file to display for it.)
 b 3 img/mp.png
 b 5 img/hp.png
-b 1 img/lk.png
-b 2 img/mk.png
-b 7 img/hk.png
+b 0 img/lk.png
+b 1 img/mk.png
 h left left (A HAT input, which is the d-pad on many controllers. First is the direction on the controller, then the direction or image it maps to.)
 h right right
 h up up
@@ -27,3 +26,4 @@ a 0 0 -0.5 left (An axis input. First is the axis index, second the rest postion
 a 0 0 0.5 right
 a 1 0 0.5 down
 a 1 0 -0.5 up
+a 5 -1 0 img/hk.png
